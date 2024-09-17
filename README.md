@@ -85,8 +85,8 @@ Yes, you can! 💡
 
    ```powershell
    #Example
-   $jumpboxVMName = "AVSJumpBox"
-   $jumpboxVMResourceGroup = "Management-RG"
+   $jumpboxVMName = "lenvolk-jumpbox"
+   $jumpboxVMResourceGroup = "lenvolk-Network"
    az vm identity assign -g $jumpboxVMResourceGroup -n $jumpboxVMName
    # $spID=$(az vm identity assign -g $jumpboxVMResourceGroup -n $jumpboxVMName --query systemAssignedIdentity --out tsv)
    ```
@@ -101,8 +101,8 @@ Yes, you can! 💡
    ```powershell
    #Example:
    
-   $jumpboxVMName = "AVSJumpBox"
-   $avsPrivateCloudName = "AVS-SDDC"
+   $jumpboxVMName = "lenvolk-jumpbox"
+   $avsPrivateCloudName = "lenvolk-sddc"
    
    $spID=$(az resource list -n $jumpboxVMName --query [*].identity.principalId --out tsv)
    $avsPrivateCloudId = $(az resource list -n $avsPrivateCloudName  --query [*].id --out tsv)
