@@ -36,6 +36,9 @@
         },
         "DeploySRM":{
             "value": false
+        },
+        "GatewayPublicIPSku":{
+            "value": "Standard"
         }
     }
 }

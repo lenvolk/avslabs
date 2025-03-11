@@ -81,6 +81,7 @@ resource MultipleSDDCDeployment 'Microsoft.Resources/deployments@2021-04-01' = [
       DeployHCX: { value: DeployHCX }
       DeploySRM: { value: DeploySRM }
       VRServerCount: { value: 1 }
+      GatewayPublicIPSku: { value: 'Standard' }
     }
   }
 }]
