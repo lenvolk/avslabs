@@ -75,13 +75,18 @@ For a reference to *az* deployment command, see [this](https://learn.microsoft.c
 
 Yes, you can! 💡
 
-### What you will need?
+### What you will need (requirements)?
 
 > [!NOTE]
 > You can use Azure Cloud Shell to run the script examples in step #2 and #3.
 
 1) AVS Private Cloud deployed.
-2) A deployed Jumpbox VM that can reach out to AVS Private Cloud.
+
+1) **Internet access** (outbound) from AVS Private Cloud (SDDC). It could be through managed SNAT, or though more complicated setup (e.g. using Firewalls and NVA).
+   
+   Follow the documented instructions on [how to enable SNAT Internet outbound access from the Azure Portal](https://learn.microsoft.com/azure/azure-vmware/enable-managed-snat-for-workloads). Your should see something similar to the following screenshot. ![avssnatinternetaccess](images/internet-access-snat.png)
+
+1) A deployed Jumpbox VM that can reach out to AVS Private Cloud.
 
    ```powershell
    #Example
@@ -91,12 +96,12 @@ Yes, you can! 💡
    # $spID=$(az vm identity assign -g $jumpboxVMResourceGroup -n $jumpboxVMName --query systemAssignedIdentity --out tsv)
    ```
 
-3) System Assigned Managed Identity **enabled on the Jumpbox**.
+1) System Assigned Managed Identity **enabled on the Jumpbox**.
 
 > [!IMPORTANT]
 > Your account need to have Owner role over AVS Private Cloud, or at least User Access Administrator role in order to assign the Jumpbox Managed Identity permission over AVS Private Cloud.
 
-4) **Assign the Jumpbox Managed Identity a Contributor Role over AVS Private Cloud**.
+1) **Assign the Jumpbox Managed Identity a Contributor Role over AVS Private Cloud**.
 
    ```powershell
    #Example:
@@ -114,7 +119,7 @@ Yes, you can! 💡
    }
    ```
 
-5) At Jumpbox VM, download [bootstrap.ps1](https://raw.githubusercontent.com/Azure/avslabs/main/scripts/bootstrap.ps1) script and store it in **C:\Temp** directory.
+1) At Jumpbox VM, download [bootstrap.ps1](https://raw.githubusercontent.com/Azure/avslabs/main/scripts/bootstrap.ps1) script and store it in **C:\Temp** directory.
    You can run the command below from Command Prompt to download **boostrap.ps1**:
 
    ```powershell
@@ -135,6 +140,12 @@ Yes, you can! 💡
 
 > [!NOTE]
 > If you are using **Azure Government**, please add **-IsAzureGovernment** switch parameter to the command
+
+> [!WARNING]
+> When specifying **GroupNumber**, be aware that the number will be used to generate the IP address space for the nested lab. If it conficts with the IP CIDR block of AVS Private Cloud management or your vNET, then choose a different GroupNumber. For example, if your AVS SDDC IP CIDR block is 10.1.8.0/22 and your vNET IP CIDR block is 10.2.0.0/16, then avoid using GroupNumber 1 or 2, instead use 3 or any other number (<255).
+
+> [!CAUTION]
+> Make sure AVS Private Cloud has Internet outbound access (e.g. through managed SNAT)
 
    ```powershell
    powershell.exe -ExecutionPolicy Unrestricted -File bootstrap.ps1 -GroupNumber 1 -NumberOfNestedLabs 1 -automated
@@ -161,38 +172,62 @@ Yes, you can! 💡
 
 In case you cannot deploy a System Assigned Managed Identity on the Jumpbox VM used to deploy resources, see the following process:
 
-   1) From Jumpbox VM, open Command Prompt (cmd.exe).
-   2) Change directory to C:\Temp by running:
+First, prerequisites:
+   1) Make sure you enable Internet (outbound) access on your AVS private cloud. [Steps are here](https://learn.microsoft.com/azure/azure-vmware/enable-managed-snat-for-workloads#set-up-outbound-internet-access-by-using-the-managed-snat-service)
+
+Then, here are the steps you need to perform:
+
+   1) At the Jumpbox VM, create file `C:\Temp\nestedlabs.yml` with the following content and replace the values with the ones matching your environment:
+
+      ```yaml
+      AVSvCenter:
+         IP: "X.Y.Z.2" # Please enter the IP for AVS vCenter, do not include https:// or any slashes
+         Username: "cloudadmin@vsphere.local" # AVS vCenter Username, should be consistent
+         Password: "passwordvalue" #Enter the password for the cloudadmin@vsphere.local
+      AVSNSXT:
+         IP: "X.Y.Z.3" # Please enter the IP for AVS NSX Manager, do not include https:// or any slashes
+         Username: "cloudadmin" # NSX Username from the Azure portal
+         Password: "passwordvalue" # #Enter the password for the cloudadmin
+      ```
+
+   2) Open Command Prompt (cmd.exe).
+   3) Change directory to C:\Temp by running:
 
       ```powershell
       cd c:\Temp\
       ```
 
-   3) Create file `C:\Temp\nestedlabs.yml` with the following content and replace the values with the ones matching your environment:
+   4) Validate that **bootstrap.ps1** exits and the file extension is **.ps1** not .txt for example.
 
-      ```yaml
-      AVSvCenter:
-         IP: "X.Y.Z.2" # Please enter the URL for AVS vCenter, do not include https:// or any slashes
-         Username: "cloudadmin@vsphere.local" # AVS vCenter Username, should be consistent
-         Password: "passwordvalue" #Enter the password for the cloudadmin@vsphere.local
-      AVSNSXT:
-         IP: "X.Y.Z.3" # Please enter the URL for AVS NSX-T Manager, do not include https:// or any slashes
-         Username: "cloudadmin" # NSX-T Username from the Azure portal
-         Password: "passwordvalue" # #Enter the password for the cloudadmin
+      ```powershell
+      dir
       ```
 
-   4) Validate that **bootstrap.ps1** exits and the file extension is **.ps1** not .txt for example
-
-   5) Run this command, but first make sure you setup the appropriate **GroupNumber** (keep it 1 if you are not sure), and required number of nested lab environments: **NumberOfNestedLabs**.
+   5) Run the following command, but first make sure you setup the appropriate **GroupNumber** (keep it 1 if you are not sure), and required number of nested lab environments: **NumberOfNestedLabs**.
 
 > [!NOTE]
 > If you are using **Azure Government**, please add **-IsAzureGovernment** switch parameter to the command
+
+> [!CAUTION]
+> Make sure AVS Private Cloud has Internet outbound access (e.g. through managed SNAT)
 
    ```powershell
    powershell.exe -ExecutionPolicy Unrestricted -File bootstrap.ps1 -GroupNumber 1 -NumberOfNestedLabs 1 -automated
    ```
 
 ## Troubleshoot
+
+### Known causes of issues
+1) Make sure you don't have overlapping IP addresses between nested lab environment 10.X.Y.0/16 and the following:
+   1) AVS Private Cloud **management IP CIDR block**
+   1) NSX **network segments IP CIDR blocks** for workloads running on AVS Private Cloud
+   1) Azure Virtual Network (or vWAN Hub) **IP CIDR block**
+1) AVS Private Cloud has Internet (outbound) access enabled. Usually through Managed SNAT if this is only for testing purposes.
+1) Make sure you are using the right credentials to access nested lab vCenter. Should be:
+   - Address: https://10.X.Y.2 , where X represent your team (group) number and Y is the instance number. For example, team/group 1, instance 2, will be: https://10.1.2.2
+   - Username: **administrator@avs.lab**
+   - Password: **MSFTavs1!**
+1) Worst case, try redeploying with different X, Y values. Before you proceed with further troubleshooting.
 
 ### How to delete nested labs?
 
@@ -211,10 +246,13 @@ You may want to clean nested labs as they could have already consumed and you wo
 
    ![screenshot](images/cleanup-nestedlabs-rp.png)
 
-5) Go to NSX-T Portal -> Go to Segments.
+5) Go to NSX Management Console -> Go to Segments.
 6) Delete any segments created for the NestedLabs (i.e.: Group-1-1-**NestedLab**).
 
 ### Deploy out of a ScheduledTask context
+
+> [!CAUTION]
+> Make sure AVS Private Cloud has Internet outbound access (e.g. through managed SNAT)
 
 You can run `bootstrap.ps1` without parameter `-automated` to initiate a deployment that will not use a ScheduleTask nor reboot the Jumpbox.
 
