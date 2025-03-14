@@ -406,33 +406,39 @@ if ( $deployNFSVM -or $deployNestedESXiVMs -or $deployVCSA) {
 
     # Connecting to NSX-T Manager
     Write-Log "Connecting to NSX-T Server $nsxtHost ..."
+    $nsxtConnection = $null
+    $useRestApiOnly = $false
+    
     try {
-        # Use REST API approach instead of Connect-NsxtServer to avoid Newtonsoft.Json CLR error
-        $base64AuthInfo = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("$($nsxtUser):$($nsxtPass)"))
-        $nsxHeader = @{
-            Authorization = "Basic $base64AuthInfo"
-        }
-        
-        # Test connection to NSX-T
-        $testUrl = "https://$nsxtHost/policy/api/v1/infra/sites/default/enforcement-points/default"
-        $testConnection = Invoke-RestMethod -Uri $testUrl -Headers $nsxHeader -Method GET -SkipCertificateCheck
-        
-        Write-Log "Successfully connected to NSX-T Server using REST API"
+        # First try to connect using the NSX module
+        Write-Log "Attempting to connect to NSX-T using PowerCLI module..."
+        $nsxtConnection = Connect-NsxtServer -Server $nsxtHost -User $nsxtUser -Password $nsxtPass -WarningAction SilentlyContinue -ErrorAction Stop
+        Write-Log "Connected to NSX-T Server using PowerCLI module"
     }
     catch {
-        Write-Log "Failed to connect to $nsxtHost using REST API. Error: $_"
+        Write-Log "Failed to connect to $nsxtHost using PowerCLI module. Error: $_"
+        $useRestApiOnly = $true
         
-        # Try legacy approach as fallback with error handling
+        # Fall back to REST API approach
         try {
-            Write-Log "Trying legacy connection method as fallback..."
-            $nsxtConnection = Connect-NsxtServer -Server ${nsxtHost} -User ${nsxtUser} -Password ${nsxtPass} -WarningAction SilentlyContinue -ErrorAction Stop
-            Write-Log "Connected to NSX-T Server using legacy connection"
+            Write-Log "Falling back to REST API approach..."
+            $base64AuthInfo = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("$($nsxtUser):$($nsxtPass)"))
+            $nsxHeader = @{
+                Authorization = "Basic $base64AuthInfo"
+            }
+            
+            # Test connection to NSX-T
+            $testUrl = "https://$nsxtHost/policy/api/v1/infra/sites/default/enforcement-points/default"
+            $testConnection = Invoke-RestMethod -Uri $testUrl -Headers $nsxHeader -Method GET -SkipCertificateCheck
+            
+            Write-Log "Successfully connected to NSX-T Server using REST API"
         }
         catch {
-            Write-Log "Failed to connect to $nsxtHost using legacy connection. Error: $_"
-            Write-Log "Will continue with REST API methods only"
+            Write-Log "Failed to connect to $nsxtHost using REST API. Error: $_"
+            Write-Log "Exiting script as NSX-T connectivity is required..."
+            exit
         }
-    } 
+    }
 
     # Create Resource Pool
     Write-Log "Creating $VMResourcePool if it does not exist ......"
@@ -442,50 +448,54 @@ if ( $deployNFSVM -or $deployNestedESXiVMs -or $deployVCSA) {
         Write-Log "Creation of $VMResourcePool completed."
     }
 
-    # Get Transport Zone ID: Transport Zone Overlay = $tzoneOverlay, Transport Zone Overlay ID = $tzoneOverlayID, tzPath
-    Write-Log "Getting Transport Zone Overlay ID from NSX-T"
-
-    $tzSvc = Get-NsxtService -Name com.vmware.nsx.transport_zones
-    $tzones = $tzSvc.list()
-    $tzoneOverlay = $tzones.results | Where-Object { $_.display_name -like 'TNT**-OVERLAY-TZ' }
-    #TODO: Test if commenting the following line will cause any problem
-    #$tzoneOverlayID = $tzoneOverlay.id
-    $tzoneOverlay = $tzoneOverlay.display_name
-
-    #TODO: Get-NsxtPolicyService is depricated, need to find alternative
-
-    #Solution is as below but need to test switching from Connect-NsxtServer to Connect-NsxServer 
-    <#
-    #References: https://blogs.vmware.com/networkvirtualization/2022/05/navigating-nsx-module-in-powercli-12-6.html/
-    #            https://github.com/vmware-samples/nsx-t/tree/master/powercli
-    Connect-NsxServer -Server $nsxtHost -User $nsxtUser -Password $nsxtPass
-    $tzs = Invoke-ListTransportZonesForEnforcementPoint -EnforcementpointId "default" -SiteId "default"
-    $tzPath = ($tzs.Results | Where-Object { $_.DisplayName -match 'TNT\d{2}-OVERLAY-TZ' }).Path | Select-Object -First 1
-    #>
-
-    #TODO: Test if commenting the following line will cause any problem
-    #$transportZonePolicyService = Get-NsxtPolicyService -Name "com.vmware.nsx_policy.infra.sites.enforcement_points.transport_zones"
-    #$tzPath = ($transportZonePolicyService.list("default", "default").results | where { $_.display_name -like "TNT**-OVERLAY-TZ" }).path
-
-    # Get Default T1 Gateway
-    Write-Log "Getting NSX-T Default T1 Gateway"
-
-    $t1svc = Get-NsxtService -Name com.vmware.nsx.logical_routers
-    $t1list = $t1Svc.list()
-    $t1result = $t1list.results | Where-Object { $_.display_name -like 'TNT**-T1' }
-    #TODO: Test if commenting the following line will cause any problem
-    #$t1ID = $t1result.id
-    $t1Name = $t1result.display_name
-
-    # Create Segment Profiles
-
-    $getswitchprof = Get-NsxtService -Name com.vmware.nsx.switching_profiles
-    $getswitchproflist = $getswitchprof.list()
-    $getswitchprofresult = $getswitchproflist.results | Where-Object { $_.display_name -like 'Group${groupNumber}*' }
-    $switchprofName = $getswitchprofresult.display_name
+    # Get Transport Zone ID and T1 Gateway information
+    if ($useRestApiOnly) {
+        # Using REST API method to get Transport Zone and T1 Gateway
+        Write-Log "Getting Transport Zone Overlay ID from NSX-T using REST API"
+        
+        $tzoneURL = "https://$nsxtHost/api/v1/transport-zones"
+        $tzones = Invoke-RestMethod -Uri $tzoneURL -Headers $nsxHeader -Method GET -SkipCertificateCheck
+        $tzoneOverlay = $tzones.results | Where-Object { $_.display_name -like 'TNT**-OVERLAY-TZ' }
+        $tzoneOverlay = $tzoneOverlay.display_name
+        
+        Write-Log "Getting NSX-T Default T1 Gateway using REST API"
+        
+        $t1URL = "https://$nsxtHost/api/v1/logical-routers"
+        $t1list = Invoke-RestMethod -Uri $t1URL -Headers $nsxHeader -Method GET -SkipCertificateCheck
+        $t1result = $t1list.results | Where-Object { $_.display_name -like 'TNT**-T1' }
+        $t1Name = $t1result.display_name
+        
+        # Get Switch Profiles
+        $switchProfileURL = "https://$nsxtHost/api/v1/switching-profiles"
+        $switchProfiles = Invoke-RestMethod -Uri $switchProfileURL -Headers $nsxHeader -Method GET -SkipCertificateCheck
+        $switchprofresult = $switchProfiles.results | Where-Object { $_.display_name -like "Group${groupNumber}*" }
+        $switchprofName = $switchprofresult.display_name
+    }
+    else {
+        # Using NSX module to get Transport Zone and T1 Gateway
+        Write-Log "Getting Transport Zone Overlay ID from NSX-T using PowerCLI module"
+        
+        $tzSvc = Get-NsxtService -Name com.vmware.nsx.transport_zones
+        $tzones = $tzSvc.list()
+        $tzoneOverlay = $tzones.results | Where-Object { $_.display_name -like 'TNT**-OVERLAY-TZ' }
+        $tzoneOverlay = $tzoneOverlay.display_name
+        
+        Write-Log "Getting NSX-T Default T1 Gateway using PowerCLI module"
+        
+        $t1svc = Get-NsxtService -Name com.vmware.nsx.logical_routers
+        $t1list = $t1Svc.list()
+        $t1result = $t1list.results | Where-Object { $_.display_name -like 'TNT**-T1' }
+        $t1Name = $t1result.display_name
+        
+        # Get Switch Profiles
+        $getswitchprof = Get-NsxtService -Name com.vmware.nsx.switching_profiles
+        $getswitchproflist = $getswitchprof.list()
+        $getswitchprofresult = $getswitchproflist.results | Where-Object { $_.display_name -like "Group${groupNumber}*" }
+        $switchprofName = $getswitchprofresult.display_name
+    }
     
     # Create IP Discovery Segment Profile
-    
+
     $IPProfileName = "Group${groupNumber}-IPDiscoveryProfile"
 
     if ($switchprofName -contains "$IPProfileName") {
@@ -505,29 +515,7 @@ if ( $deployNFSVM -or $deployNestedESXiVMs -or $deployVCSA) {
         $Body = @"
         {
         "resource_type": "IPDiscoveryProfile",
-        "display_name": "$IPProfileName",
-        "description": "",
-        "ip_discovery_options": {
-            "arp_snooping_config": {
-            "arp_snooping_enabled": true,
-            "arp_binding_limit": 100
-            },
-            "dhcp_snooping_enabled": true,
-            "vmtools_enabled": true
-        },
-        "ip_v6_discovery_options": {
-            "nd_snooping_config": {
-            "nd_snooping_enabled": false,
-            "nd_snooping_limit": 3
-            },
-            "dhcp_snooping_v6_enabled": false,
-            "vmtools_v6_enabled": false
-        },
-        "tofu_enabled": true,
-        "arp_nd_binding_timeout": 10,
-        "duplicate_ip_detection": {
-            "duplicate_ip_detection_enabled": false
-        }
+        "display_name": "$IPProfileName"
         }
 "@
 
@@ -538,7 +526,9 @@ if ( $deployNFSVM -or $deployNestedESXiVMs -or $deployVCSA) {
 
     $MACProfileName = "Group${groupNumber}-MACDiscoveryProfile"
 
-    if ($switchprofName -contains "$MACProfileName") {
+    # Fix the check to work regardless of whether $switchprofName is a string or array
+    if (($switchprofName -is [array] -and $switchprofName -contains $MACProfileName) -or 
+        ($switchprofName -isnot [array] -and $switchprofName -eq $MACProfileName)) {
         Write-Log "$MACProfileName already exists, will use it."
     }
     else {
@@ -554,14 +544,14 @@ if ( $deployNFSVM -or $deployNestedESXiVMs -or $deployVCSA) {
 
         $Body = @"
         {
-            "resource_type":"MacDiscoveryProfile",
-            "display_name": "${MacProfileName}",
-            "description": "",
-            "mac_change_enabled": true,
-            "mac_learning_enabled": true,
-            "unknown_unicast_flooding_enabled": true,
-            "mac_limit_policy": "ALLOW",
-            "mac_limit": 4096
+            `"resource_type`":`"MacDiscoveryProfile`",
+            `"display_name`": `"${MacProfileName}`",
+            `"description`": `"",
+            `"mac_change_enabled`": true,
+            `"mac_learning_enabled`": true,
+            `"unknown_unicast_flooding_enabled`": true,
+            `"mac_limit_policy`": `"ALLOW`",
+            `"mac_limit`": 4096
         }
 "@
 
@@ -593,19 +583,19 @@ if ( $deployNFSVM -or $deployNestedESXiVMs -or $deployVCSA) {
                 Write-Log "Security profile binding $SegSecProfileName already exists for segment $segmentName, reuse it"
             } else {
                 # If binding doesn't exist, create it
-                $Body = @"
+        $Body = @"
         {
-        "resource_type": "SegmentSecurityProfile",
-        "id": "${SegSecProfileName}",
-        "display_name": "${SegSecProfileName}",
-        "description": "",
-        "bpdu_filter_enable": false,
-        "dhcp_server_block_enabled": false,
-        "dhcp_client_block_enabled": false,
-        "non_ip_traffic_block_enabled": false,
-        "dhcp_server_block_v6_enabled": false,
-        "dhcp_client_block_v6_enabled": false,
-        "ra_guard_enabled": true
+        `"resource_type`": `"SegmentSecurityProfile`",
+        `"id`": `"${SegSecProfileName}`",
+        `"display_name`": `"${SegSecProfileName}`",
+        `"description`": `"",
+        `"bpdu_filter_enable`": false,
+        `"dhcp_server_block_enabled`": false,
+        `"dhcp_client_block_enabled`": false,
+        `"non_ip_traffic_block_enabled`": false,
+        `"dhcp_server_block_v6_enabled`": false,
+        `"dhcp_client_block_v6_enabled`": false,
+        `"ra_guard_enabled`": true
         }
 "@
                 $secPidAdd = Invoke-RestMethod -Uri $uri -Headers $Header -Method Patch -Body $Body -ContentType "application/json" -SkipCertificateCheck
@@ -630,13 +620,13 @@ if ( $deployNFSVM -or $deployNestedESXiVMs -or $deployVCSA) {
 
     $Body = @"
     {
-        "display_name":"$segmentName",
-        "subnets": [
+        `"display_name`":`"$segmentName`",
+        `"subnets`": [
             {
-                "gateway_address":"$gatewayaddress"
+                `"gateway_address`":`"$gatewayaddress`"
             }
         ],
-        "connectivity_path": "/infra/tier-1s/$t1Name"
+        `"connectivity_path`": `"/infra/tier-1s/$t1Name`"
     }
 "@
 
@@ -664,14 +654,14 @@ if ( $deployNFSVM -or $deployNestedESXiVMs -or $deployVCSA) {
     try {
         $Body = @"
     {
-        "resource_type": "SegmentSecurityProfileBindingMap",
-        "id": "${bindingName}",
-        "display_name": "${bindingName}",
-        "path": "/infra/segments/${segmentName}/segment-security-profile-binding-maps/${bindingName}",
-        "parent_path": "/infra/tier-1s/$t1Name/segments/${segmentName}",
-        "relative_path": "${bindingName}",
-        "marked_for_delete": false,
-        "segment_security_profile_path": "/infra/segment-security-profiles/Group${groupNumber}-SegmentSecurityProfile"
+        `"resource_type`": `"SegmentSecurityProfileBindingMap`",
+        `"id`": `"${bindingName}`",
+        `"display_name`": `"${bindingName}`",
+        `"path`": `"/infra/segments/${segmentName}/segment-security-profile-binding-maps/${bindingName}`",
+        `"parent_path`": `"/infra/tier-1s/$t1Name/segments/${segmentName}`",
+        `"relative_path`": `"${bindingName}`",
+        `"marked_for_delete`": false,
+        `"segment_security_profile_path`": `"/infra/segment-security-profiles/Group${groupNumber}-SegmentSecurityProfile`"
     }
 "@
         $secProfAdd = Invoke-RestMethod -Uri $uri -Headers $Header -Method Put -Body $Body -ContentType "application/json" -SkipCertificateCheck
@@ -702,11 +692,11 @@ if ( $deployNFSVM -or $deployNestedESXiVMs -or $deployVCSA) {
     try {
         $Body = @"
     {
-        "resource_type": "SegmentDiscoveryProfileBindingMap",
-        "display_name": "${bindingName}",
-        "description": "",
-        "mac_discovery_profile_path": "/infra/mac-discovery-profiles/Group${groupNumber}-MACDiscoveryProfile",
-        "ip_discovery_profile_path": "/infra/ip-discovery-profiles/Group${groupNumber}-IPDiscoveryProfile"
+        `"resource_type`": `"SegmentDiscoveryProfileBindingMap`",
+        `"display_name`": `"${bindingName}`",
+        `"description`": `"",
+        `"mac_discovery_profile_path`": `"/infra/mac-discovery-profiles/Group${groupNumber}-MACDiscoveryProfile`",
+        `"ip_discovery_profile_path`": `"/infra/ip-discovery-profiles/Group${groupNumber}-IPDiscoveryProfile`"
     }
 "@
         $discProfAdd = Invoke-RestMethod -Uri $uri -Headers $Header -Method Patch -Body $Body -ContentType "application/json" -SkipCertificateCheck
@@ -1073,15 +1063,15 @@ if ($setupNewVC) {
         
         $Body = @"
         {
-            "display_name": "$NewVcVAppName",
-            "network": "10.${groupNumber}.1${labNumber}.128/27",
-            "next_hops":[
+            `"display_name`": `"$NewVcVAppName`",
+            `"network`": `"10.${groupNumber}.1${labNumber}.128/27`",
+            `"next_hops`":[
                 {
-                    "admin_distance":1,
-                    "ip_address": "$RouterVMIPAddress"
+                    `"admin_distance`":1,
+                    `"ip_address`": `"$RouterVMIPAddress`"
                 }
             ],
-            "id":"$NewVcVAppName"
+            `"id`":`"$NewVcVAppName`"
         }
 "@
         $sRouteURL = "https://$nsxtHost/policy/api/v1/infra/tier-1s/$t1Name/static-routes/$NewVcVAppName"

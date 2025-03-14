@@ -227,6 +227,7 @@ function Set-NestedLabPackage {
     }
 
     #Downloading latest version of labdeploy.ps1
+
     $NestedLabScriptPath = $ExtractionPath + "\" + $NestedLabScriptURL.Split('/')[-1]
     if (Test-Path $NestedLabScriptPath -PathType Leaf) {
         Remove-Item -Path $NestedLabScriptPath -Force -Confirm:$false -ErrorAction Continue
