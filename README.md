@@ -265,7 +265,7 @@ You can then Open a PowerShell 7 session to run the deployment script:
    ```
 
    ```powershell
-   pwsh.exe -ExecutionPolicy Unrestricted -WorkingDirectory "c:\temp" -File "c:\temp\bootstrap-nestedlabs.ps1" -GroupId 1 -Labs 1
+   pwsh.exe -ExecutionPolicy Unrestricted -WorkingDirectory "c:\temp" -File "c:\temp\bootstrap-nestedlabs.ps1" -GroupId 3 -Labs 1
    ```
 
 ### Restart a deployment from a specific lab index
