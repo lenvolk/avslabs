@@ -759,8 +759,8 @@ if ($deployNestedESXiVMs) {
         #TODO: Specifying a distributed port group name as network name is no longer supported. Use the -Portgroup parameter.
         #https://developer.broadcom.com/powercli/latest/vmware.vimautomation.core/commands/new-networkadapter/
 
-        New-NetworkAdapter -VM $vm -Type Vmxnet3 -NetworkName $VMNetwork -StartConnected -confirm:$false | Out-File -Append -LiteralPath $verboseLogFile
-        New-NetworkAdapter -VM $vm -Type Vmxnet3 -NetworkName $VMNetwork -StartConnected -confirm:$false | Out-File -Append -LiteralPath $verboseLogFile
+        New-NetworkAdapter -VM $vm -Type Vmxnet3 -Portgroup $VMNetwork -StartConnected -confirm:$false | Out-File -Append -LiteralPath $verboseLogFile
+        New-NetworkAdapter -VM $vm -Type Vmxnet3 -Portgroup $VMNetwork -StartConnected -confirm:$false | Out-File -Append -LiteralPath $verboseLogFile
 
         Write-Log "Updating vCPU Count to $NestedESXivCPU & vMEM to $NestedESXivMEM GB ..."
         Set-VM -Server $viConnection -VM $vm -NumCpu $NestedESXivCPU -MemoryGB $NestedESXivMEM -Confirm:$false | Out-File -Append -LiteralPath $verboseLogFile
