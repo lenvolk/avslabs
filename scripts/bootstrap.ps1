@@ -92,25 +92,106 @@ function Install-Applications {
 }
 
 function Get-BootstrapScript {
-
-    $MainBootstrapPackagePath = $TempPath + "\" + $MainBootstrapScriptURL.Split('/')[-1]
+    $MainBootstrapFileName = $MainBootstrapScriptURL.Split('/')[-1]
+    $MainBootstrapPackagePath = Join-Path $TempPath $MainBootstrapFileName
     
     if (Test-Path $MainBootstrapPackagePath -PathType Leaf) {
         Write-Log "|--Get-BootstrapScript - Nested labs bootstrap script 'bootstrap.ps1' already exists"
     } else {
         Write-Log "|--Get-BootstrapScript - Downloading nested labs bootstrap script 'bootstrap.ps1'"
-        Start-BitsTransfer -Source $MainBootstrapScriptURL -Destination $TempPath -Priority High
+        Download-FileWithFallback -Source $MainBootstrapScriptURL -Destination $TempPath -FileName $MainBootstrapFileName
     }
 
     #----------------------------------------------------------------------------------------------------------------------#
 
-    $BootstrapPackagePath = $TempPath + "\" + $BootstrapScriptURL.Split('/')[-1]
+    $BootstrapFileName = $BootstrapScriptURL.Split('/')[-1]
+    $BootstrapPackagePath = Join-Path $TempPath $BootstrapFileName
 
     if (Test-Path $BootstrapPackagePath -PathType Leaf) {
         Write-Log "|--Get-BootstrapScript - Nested labs bootstrap script 'bootstrap-nestedlabs.ps1' already exists"
     } else {
         Write-Log "|--Get-BootstrapScript - Downloading nested labs bootstrap script 'bootstrap-nestedlabs.ps1'"
-        Start-BitsTransfer -Source $BootstrapScriptURL -Destination $TempPath -Priority High
+        Download-FileWithFallback -Source $BootstrapScriptURL -Destination $TempPath -FileName $BootstrapFileName
+    }
+}
+
+function Download-FileWithFallback {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Source,
+        
+        [Parameter(Mandatory = $true)]
+        [string]$Destination,
+        
+        [Parameter()]
+        [string]$FileName,
+        
+        [Parameter()]
+        [int]$RetryCount = 3
+    )
+    
+    # Get filename from URL if not specified
+    if (-not $FileName) {
+        $FileName = $Source.Split('/')[-1]
+    }
+    
+    $FullDestination = Join-Path $Destination $FileName
+    
+    # Check if file already exists
+    if (Test-Path $FullDestination) {
+        Write-Log "|--Download-FileWithFallback - File already exists: $FullDestination"
+        return $true
+    }
+    
+    Write-Log "|--Download-FileWithFallback - Attempting to download $Source to $FullDestination"
+    
+    # Ensure TLS 1.2 is used
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    
+    # Try BITS transfer first with retries
+    for ($i = 1; $i -le $RetryCount; $i++) {
+        try {
+            Write-Log "|--Download-FileWithFallback - Trying BitsTransfer (attempt $i of $RetryCount)..."
+            Start-BitsTransfer -Source $Source -Destination $FullDestination -Priority High -ErrorAction Stop
+            Write-Log "|--Download-FileWithFallback - BitsTransfer completed successfully"
+            return $true
+        }
+        catch {
+            $errorMessage = $_.Exception.Message
+            Write-Log "|--Download-FileWithFallback - BitsTransfer attempt $i failed: $errorMessage"
+            if ($i -eq $RetryCount) {
+                Write-Log "|--Download-FileWithFallback - All BitsTransfer attempts failed, trying alternative methods"
+            } else {
+                Write-Log "|--Download-FileWithFallback - Retrying in 5 seconds..."
+                Start-Sleep -Seconds 5
+            }
+        }
+    }
+        
+    # Try WebClient as fallback
+    try {
+        Write-Log "|--Download-FileWithFallback - Trying WebClient download method..."
+        $webClient = New-Object System.Net.WebClient
+        $webClient.DownloadFile($Source, $FullDestination)
+        Write-Log "|--Download-FileWithFallback - WebClient download completed successfully"
+        return $true
+    }
+    catch {
+        $errorMessage = $_.Exception.Message
+        Write-Log "|--Download-FileWithFallback - WebClient download failed: $errorMessage"
+        
+        # Try Invoke-WebRequest as last resort
+        try {
+            Write-Log "|--Download-FileWithFallback - Trying Invoke-WebRequest..."
+            Invoke-WebRequest -Uri $Source -OutFile $FullDestination -UseBasicParsing
+            Write-Log "|--Download-FileWithFallback - Invoke-WebRequest download completed successfully"
+            return $true
+        }
+        catch {
+            $errorMessage = $_.Exception.Message
+            Write-Log "|--Download-FileWithFallback - All download methods failed for $Source. Error: $errorMessage"
+            return $false
+        }
     }
 }
 
@@ -146,18 +227,18 @@ function Set-BootstrapScheduledTask {
 }
 
 function Get-NestedLabPackage {
- 
-    $ZipPackagePath = $TempPath + "\" + $PackageURL.Split('/')[-1]
+    $ZipFileName = $PackageURL.Split('/')[-1]
+    $ZipPackagePath = Join-Path $TempPath $ZipFileName
 
     if (Test-Path $ZipPackagePath -PathType Leaf) {
         Write-Log "|--Get-NestedLabPackage - Nested labs zip package already exists"
         return $true
     }
     else { 
-
-        Start-BitsTransfer -Source $PackageURL -Destination $TempPath -Priority High
-
-        if (Test-Path $ZipPackagePath -PathType Leaf) {
+        Write-Log "|--Get-NestedLabPackage - Downloading nested labs zip package, this may take some time..."
+        $downloadResult = Download-FileWithFallback -Source $PackageURL -Destination $TempPath -FileName $ZipFileName
+        
+        if ($downloadResult) {
             Write-Log "|--Get-NestedLabPackage - Nested labs zip package downloaded successfully"
             return $true
         }

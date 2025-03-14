@@ -406,8 +406,33 @@ if ( $deployNFSVM -or $deployNestedESXiVMs -or $deployVCSA) {
 
     # Connecting to NSX-T Manager
     Write-Log "Connecting to NSX-T Server $nsxtHost ..."
-    $nsxtConnection = Connect-NsxtServer -Server ${nsxtHost} -User ${nsxtUser} -Password ${nsxtPass}
-    Write-Log "Connected to NSX-T Server"
+    try {
+        # Use REST API approach instead of Connect-NsxtServer to avoid Newtonsoft.Json CLR error
+        $base64AuthInfo = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("$($nsxtUser):$($nsxtPass)"))
+        $nsxHeader = @{
+            Authorization = "Basic $base64AuthInfo"
+        }
+        
+        # Test connection to NSX-T
+        $testUrl = "https://$nsxtHost/policy/api/v1/infra/sites/default/enforcement-points/default"
+        $testConnection = Invoke-RestMethod -Uri $testUrl -Headers $nsxHeader -Method GET -SkipCertificateCheck
+        
+        Write-Log "Successfully connected to NSX-T Server using REST API"
+    }
+    catch {
+        Write-Log "Failed to connect to $nsxtHost using REST API. Error: $_"
+        
+        # Try legacy approach as fallback with error handling
+        try {
+            Write-Log "Trying legacy connection method as fallback..."
+            $nsxtConnection = Connect-NsxtServer -Server ${nsxtHost} -User ${nsxtUser} -Password ${nsxtPass} -WarningAction SilentlyContinue -ErrorAction Stop
+            Write-Log "Connected to NSX-T Server using legacy connection"
+        }
+        catch {
+            Write-Log "Failed to connect to $nsxtHost using legacy connection. Error: $_"
+            Write-Log "Will continue with REST API methods only"
+        }
+    } 
 
     # Create Resource Pool
     Write-Log "Creating $VMResourcePool if it does not exist ......"
@@ -482,7 +507,7 @@ if ( $deployNFSVM -or $deployNestedESXiVMs -or $deployVCSA) {
         "resource_type": "IPDiscoveryProfile",
         "display_name": "$IPProfileName",
         "description": "",
-        "ip_v4_discovery_options": {
+        "ip_discovery_options": {
             "arp_snooping_config": {
             "arp_snooping_enabled": true,
             "arp_binding_limit": 100
@@ -561,7 +586,14 @@ if ( $deployNFSVM -or $deployNestedESXiVMs -or $deployVCSA) {
             Authorization = "Basic $base64AuthInfo"
         }
 
-        $Body = @"
+        # Check if security segment profile binding already exists
+        try {
+            $existingSecBinding = Invoke-WebRequest -Uri $uri -Headers $Header -Method GET -SkipCertificateCheck -SkipHttpErrorCheck
+            if ($existingSecBinding.StatusCode -eq 200) {
+                Write-Log "Security profile binding $SegSecProfileName already exists for segment $segmentName, reuse it"
+            } else {
+                # If binding doesn't exist, create it
+                $Body = @"
         {
         "resource_type": "SegmentSecurityProfile",
         "id": "${SegSecProfileName}",
@@ -576,8 +608,12 @@ if ( $deployNFSVM -or $deployNestedESXiVMs -or $deployVCSA) {
         "ra_guard_enabled": true
         }
 "@
-
-        $secprofile = Invoke-RestMethod -Uri $uri -Headers $Header -Method Patch -Body $Body -ContentType "application/json" -SkipCertificateCheck
+                $secPidAdd = Invoke-RestMethod -Uri $uri -Headers $Header -Method Patch -Body $Body -ContentType "application/json" -SkipCertificateCheck
+                Write-Log "Security profile binding $SegSecProfileName created"
+            }
+        } catch {
+            Write-Log "Error checking/creating security segment profile: $_"
+        }
     }
 
     ## Create Network Segment for Nested Lab
@@ -603,7 +639,7 @@ if ( $deployNFSVM -or $deployNestedESXiVMs -or $deployVCSA) {
         "connectivity_path": "/infra/tier-1s/$t1Name"
     }
 "@
- 
+
     $segmentURL = "https://$nsxtHost/policy/api/v1/infra/tier-1s/$t1Name/segments/" + $segmentName
     $existingSegment = Invoke-WebRequest -Uri $segmentURL -Headers $Header -Method GET -SkipCertificateCheck -SkipHttpErrorCheck
     if ($existingSegment.StatusCode -eq 200) {
@@ -618,16 +654,15 @@ if ( $deployNFSVM -or $deployNestedESXiVMs -or $deployVCSA) {
     Write-Log "Adding Security Segment Profile to $segmentName ....."
 
     $bindingName = "Lab${groupNumber}-segment_security_binding_map"
-
     $uri = "https://$nsxtHost/policy/api/v1/infra/tier-1s/$t1Name/segments/${segmentName}/segment-security-profile-binding-maps/${bindingName}"
-
     $base64AuthInfo = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("$($nsxtUser):$($nsxtPass)"))
-
     $Header = @{
         Authorization = "Basic $base64AuthInfo"
     }
 
-    $Body = @"
+    # Try to create security binding, handle 'already exists' error gracefully
+    try {
+        $Body = @"
     {
         "resource_type": "SegmentSecurityProfileBindingMap",
         "id": "${bindingName}",
@@ -639,33 +674,54 @@ if ( $deployNFSVM -or $deployNestedESXiVMs -or $deployVCSA) {
         "segment_security_profile_path": "/infra/segment-security-profiles/Group${groupNumber}-SegmentSecurityProfile"
     }
 "@
-
-    $secProfAdd = Invoke-RestMethod -Uri $uri -Headers $Header -Method Put -Body $Body -ContentType "application/json" -SkipCertificateCheck
+        $secProfAdd = Invoke-RestMethod -Uri $uri -Headers $Header -Method Put -Body $Body -ContentType "application/json" -SkipCertificateCheck
+        Write-Log "Security profile binding $bindingName created successfully"
+    }
+    catch {
+        # Check if it's the "already exists" error
+        if ($_.Exception.Response.StatusCode -eq 400 -and $_.ToString() -match "already exists") {
+            Write-Log "Security profile binding $bindingName already exists, continuing..."
+        }
+        else {
+            Write-Log "Error creating security profile binding: $_"
+            Write-Log "Continuing despite error..."
+        }
+    }
 
     ## Adding Discovery Segment Profiles
     Write-Log "Adding Discovery Segment Profile to $segmentName ....."
 
     $bindingName = "Lab${groupNumber}-segment_discovery_binding_map"
-
     $uri = "https://$nsxtHost/policy/api/v1/infra/tier-1s/$t1Name/segments/${segmentName}/segment-discovery-profile-binding-maps/${bindingName}"
-
     $base64AuthInfo = [Convert]::ToBase64String([Text.Encoding]::ASCII.GetBytes("$($nsxtUser):$($nsxtPass)"))
-
     $Header = @{
         Authorization = "Basic $base64AuthInfo"
     }
 
-    $Body = @"
+    # Try to create discovery binding, handle 'already exists' error gracefully
+    try {
+        $Body = @"
     {
-        "resource_type":" SegmentDiscoveryProfileBindingMap",
+        "resource_type": "SegmentDiscoveryProfileBindingMap",
         "display_name": "${bindingName}",
-        "description":"",
-        "mac_discovery_profile_path":"/infra/mac-discovery-profiles/Group${groupNumber}-MACDiscoveryProfile",
-        "ip_discovery_profile_path":"/infra/ip-discovery-profiles/Group${groupNumber}-IPDiscoveryProfile"
+        "description": "",
+        "mac_discovery_profile_path": "/infra/mac-discovery-profiles/Group${groupNumber}-MACDiscoveryProfile",
+        "ip_discovery_profile_path": "/infra/ip-discovery-profiles/Group${groupNumber}-IPDiscoveryProfile"
     }
 "@
-
-    $discProfAdd = Invoke-RestMethod -Uri $uri -Headers $Header -Method Patch -Body $Body -ContentType "application/json" -SkipCertificateCheck
+        $discProfAdd = Invoke-RestMethod -Uri $uri -Headers $Header -Method Patch -Body $Body -ContentType "application/json" -SkipCertificateCheck
+        Write-Log "Discovery profile binding $bindingName created successfully"
+    }
+    catch {
+        # Check if it's the "already exists" error
+        if ($_.Exception.Response.StatusCode -eq 400 -and $_.ToString() -match "already exists") {
+            Write-Log "Discovery profile binding $bindingName already exists, continuing..."
+        }
+        else {
+            Write-Log "Error creating discovery profile binding: $_"
+            Write-Log "Continuing despite error..."
+        }
+    }
 
     # Get Logical Switch Information
     Write-Log "Getting Logical Switch Information for $segmentName"

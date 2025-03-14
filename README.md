@@ -249,21 +249,23 @@ You may want to clean nested labs as they could have already consumed and you wo
 5) Go to NSX Management Console -> Go to Segments.
 6) Delete any segments created for the NestedLabs (i.e.: Group-1-1-**NestedLab**).
 
-### Deploy out of a ScheduledTask context
+### Deploy out of a ScheduledTask context and without the need for System Assigned Managed Identity
 
 > [!CAUTION]
 > Make sure AVS Private Cloud has Internet outbound access (e.g. through managed SNAT)
 
 You can run `bootstrap.ps1` without parameter `-automated` to initiate a deployment that will not use a ScheduleTask nor reboot the Jumpbox.
 
-   ```powershell
-   powershell.exe -ExecutionPolicy Unrestricted -File bootstrap.ps1
-   ```
+From scripts directory copy files: `bootstrap.ps1` `bootstrap-nestedlabs.ps1` `nestedlabs.yml` over to c:\temp
 
 You can then Open a PowerShell 7 session to run the deployment script:
 
    ```powershell
-   pwsh.exe -ExecutionPolicy Unrestricted -WorkingDirectory "c:\temp" -File "c:\temp\bootstrap-nestedlabs.ps1" -GroupId X -Labs Y
+   powershell.exe -ExecutionPolicy Unrestricted -File bootstrap.ps1
+   ```
+
+   ```powershell
+   pwsh.exe -ExecutionPolicy Unrestricted -WorkingDirectory "c:\temp" -File "c:\temp\bootstrap-nestedlabs.ps1" -GroupId 1 -Labs 1
    ```
 
 ### Restart a deployment from a specific lab index
