@@ -31,14 +31,7 @@ $NestedLabScriptURL = "https://raw.githubusercontent.com/lenvolk/avslabs/refs/he
 $UbuntuOvaURL = "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.ova"
 $RouterUserDataURL = "https://raw.githubusercontent.com/Azure/avslabs/main/scripts/router-userdata.yaml"
 
-# initializing
 
-# clear log file
-<#
-if (Test-Path $LogFile) {
-    Clear-Content $LogFile
-}
-#>
 
 # auxiliary functions
 function Write-Log {
