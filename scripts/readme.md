@@ -29,7 +29,7 @@ This creates a unique `10.3.1.0/24` subnet for each nested lab with the followin
 
 Additionally, for workload VMs, a secondary network is created:
 
-- Network: `10.3.11.128/27` (note how the third octet becomes `"1${labNumber}"` = `"11"`)
+- Network: `10.3.11.128/27` aka `255.255.255.224` (note how the third octet becomes `"1${labNumber}"` = `"11"`)
 - Gateway: `10.3.11.129`
 - Workload VMs: `10.3.11.130`, `10.3.11.131`, etc.
 
