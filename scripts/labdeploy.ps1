@@ -109,7 +109,7 @@ $NestedESXiHostnameToIPs = @{
 
 # Nested ESXi VM Resources
 $NestedESXivCPU = "16" #Cores
-$NestedESXivMEM = "48" #GB
+$NestedESXivMEM = "128" #GB
 
 # Defaults
 $defaultPassword = "MSFTavs1!"
