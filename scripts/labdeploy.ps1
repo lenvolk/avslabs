@@ -199,9 +199,9 @@ $vcsaSize2MemoryStorageMap = @{
     "xlarge" = @{"cpu" = "24"; "mem" = "56"; "disk" = "1805" }
 }
 
-$esxiTotalCPU = 12
+$esxiTotalCPU = 24
 $vcsaTotalCPU = 0
-$esxiTotalMemory = 48
+$esxiTotalMemory = 256
 $vcsaTotalMemory = 0
 $esxiTotalStorage = 0
 
