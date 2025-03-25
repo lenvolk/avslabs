@@ -1,8 +1,8 @@
 AVSvCenter:
-  IP: "X.Y.Z.2" # Please enter the URL for AVS vCenter, do not include https:// or any slashes
-  Username: "cloudadmin@vsphere.local" # AVS vCenter Username, should be consistent
-  Password: "passwordvalue" #Enter the password for the cloudadmin@vsphere.local
+   IP: "vc.1b97b09847e64b5a99d1c5.canadaeast.avs.azure.com" # Please enter the IP for AVS vCenter, do not include https:// or any slashes
+   Username: "cloudadmin@vsphere.local" # AVS vCenter Username, should be consistent
+   Password: "passwordvalue" #Enter the password for the cloudadmin@vsphere.local
 AVSNSXT:
-  IP: "X.Y.Z.3" # Please enter the URL for AVS NSX-T Manager, do not include https:// or any slashes
-  Username: "cloudadmin" # NSX-T Username from the Azure portal
-  Password: "passwordvalue" # #Enter the password for the cloudadmin
+   IP: "nsx.1b97b09847e64b5a99d1c5.canadaeast.avs.azure.com" # Please enter the IP for AVS NSX Manager, do not include https:// or any slashes
+   Username: "cloudadmin" # NSX Username from the Azure portal
+   Password: "passwordvalue" # #Enter the password for the cloudadmin

@@ -22,22 +22,16 @@ param (
 )
 
 # constant variables
-$Logfile = "C:\temp\bootstrap-nestedlabs.log"
+$LogFile = "C:\temp\bootstrap-nestedlabs.log"
 $TempPath = "C:\temp"
 $ConfigurationFile = "C:\temp\nestedlabs.yml"
 $ExtractionPath = "C:\temp\avs-embedded-labs-auto"
-$NestedLabScriptURL = "https://raw.githubusercontent.com/Azure/avslabs/main/scripts/labdeploy.ps1"
+#!!! remember to update the URL if you change the location of the script in GitHub
+$NestedLabScriptURL = "https://raw.githubusercontent.com/lenvolk/avslabs/refs/heads/main/scripts/labdeploy.ps1"
 $UbuntuOvaURL = "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.ova"
 $RouterUserDataURL = "https://raw.githubusercontent.com/Azure/avslabs/main/scripts/router-userdata.yaml"
 
-# initializing
 
-# clear log file
-<#
-if (Test-Path $LogFile) {
-    Clear-Content $LogFile
-}
-#>
 
 # auxiliary functions
 function Write-Log {
@@ -59,6 +53,7 @@ function Set-PowerCLI {
 }
 
 #-------------------------------------------------------------------------------------------------------#
+
 
 function Test-AuthenticationToAVS {
 
@@ -149,7 +144,7 @@ function Test-AVSReadiness {
     
         $totalTimeWaited += $timeToWait
     
-        $avsStatus = az vmware private-cloud show -n $avsPrivateCloud  -g $resourceGroup --query "provisioningState"
+        $avsStatus = az vmware private-cloud show -n $avsPrivateCloud  -g $resourceGroup --query "provisioningState" -o tsv
 
         if ($avsStatus -match "Succeeded") {
             $statusFeedback = $true 
@@ -177,7 +172,12 @@ function Set-NestedLabRequirement {
     Set-ExecutionPolicy Unrestricted
     
     # Install VMware PowerCLI
-    $result = (Get-Module -ListAvailable -Name VMware.PowerCLI) ? $true : (Install-Module VMware.PowerCLI -Scope AllUsers -Force -SkipPublisherCheck -AllowClobber -ErrorAction Ignore)
+    if (Get-Module -ListAvailable -Name VMware.PowerCLI) {
+        $result = $true
+    } else {
+        Install-Module VMware.PowerCLI -Scope AllUsers -Force -SkipPublisherCheck -AllowClobber -ErrorAction Ignore
+        $result = $true
+    }
     
     # Configure PowerCLI
     Set-PowerCLI
@@ -187,10 +187,15 @@ function Set-NestedLabRequirement {
     # Start-Sleep -Seconds 30
 
     # Install YAML PowerShell Module
-    $result = (Get-Module -ListAvailable -Name powershell-yaml) ? $true : (Install-Module powershell-yaml -Scope AllUsers -Force -SkipPublisherCheck -AllowClobber -ErrorAction Ignore)
+    if (Get-Module -ListAvailable -Name powershell-yaml) {
+        $result = $true
+    } else {
+        Install-Module powershell-yaml -Scope AllUsers -Force -SkipPublisherCheck -AllowClobber -ErrorAction Ignore
+        $result = $true
+    }
 
     # Extra Verification 
-    $result = (Get-Module -ListAvailable -Name VMware.PowerCLI) ? $true : $false
+    $result = (Get-Module -ListAvailable -Name VMware.PowerCLI) -ne $null
 
     return $result
 }
@@ -209,9 +214,9 @@ function Set-NestedLabPackage {
 
             #Checking if there is enough diskspace before extracting the file
             if (Test-AvailableDiskSpace) {
-                #Extracting Lab Package (zip) using 7zip
+                #Extracting Lab Package (zip)
                 Write-Log "|--Set-NestedLabPackage - Extracting '$ZipPath'"
-                7z x $ZipPath -o*
+                Expand-Archive -Path $ZipPath -DestinationPath $ExtractionPath -Force
             } else {
                 Write-Log "|--Set-NestedLabPackage - Unable to extract; no enough disk space"
             }
@@ -222,30 +227,151 @@ function Set-NestedLabPackage {
     }
 
     #Downloading latest version of labdeploy.ps1
+
     $NestedLabScriptPath = $ExtractionPath + "\" + $NestedLabScriptURL.Split('/')[-1]
     if (Test-Path $NestedLabScriptPath -PathType Leaf) {
         Remove-Item -Path $NestedLabScriptPath -Force -Confirm:$false -ErrorAction Continue
     }
-    Start-BitsTransfer -Source $NestedLabScriptURL -Destination $ExtractionPath -Priority High
+    Download-FileWithFallback -Source $NestedLabScriptURL -Destination $ExtractionPath
 
     #Downloading Router OVA and Userdata file
-    $UbuntuOvaPath = $ExtractionPath + "\Templates\" + $UbuntuOvaURL.Split('/')[-1]
+    $TemplatesPath = "$ExtractionPath\Templates"
+    
+    # Ensure the Templates directory exists
+    if (-not (Test-Path $TemplatesPath -PathType Container)) {
+        Write-Log "|--Set-NestedLabPackage - Creating Templates directory"
+        New-Item -Path $TemplatesPath -ItemType Directory -Force | Out-Null
+    }
+    
+    $UbuntuOvaFileName = $UbuntuOvaURL.Split('/')[-1]
+    $UbuntuOvaPath = "$TemplatesPath\$UbuntuOvaFileName"
     if (Test-Path $UbuntuOvaPath -PathType Leaf) {
         Write-Log "|--Set-NestedLabPackage - Ubuntu image already downloaded"
     } else {
-        Start-BitsTransfer -Source $UbuntuOvaURL -Destination "$ExtractionPath\Templates\" -Priority High
+        Write-Log "|--Set-NestedLabPackage - Downloading Ubuntu OVA image, this may take some time..."
+        $downloadResult = Download-FileWithFallback -Source $UbuntuOvaURL -Destination $TemplatesPath -FileName $UbuntuOvaFileName
+        if (-not $downloadResult) {
+            Write-Log "|--Set-NestedLabPackage - Failed to download Ubuntu OVA image after multiple attempts"
+        } else {
+            Write-Log "|--Set-NestedLabPackage - Successfully downloaded Ubuntu OVA image to $UbuntuOvaPath"
+        }
     }
 
-    $RouterUserDataPath = $ExtractionPath + "\" + $RouterUserDataURL.Split('/')[-1]
+    $RouterUserDataFileName = $RouterUserDataURL.Split('/')[-1]
+    $RouterUserDataPath = "$ExtractionPath\$RouterUserDataFileName"
     if (Test-Path $RouterUserDataPath -PathType Leaf) {
         Write-Log "|--Set-NestedLabPackage - Router userdata file already downloaded"
     } else {
-        Start-BitsTransfer -Source $RouterUserDataURL -Destination $ExtractionPath -Priority High
+        $downloadResult = Download-FileWithFallback -Source $RouterUserDataURL -Destination $ExtractionPath -FileName $RouterUserDataFileName
+        if (-not $downloadResult) {
+            Write-Log "|--Set-NestedLabPackage - Failed to download Router userdata file after multiple attempts"
+        } else {
+            Write-Log "|--Set-NestedLabPackage - Successfully downloaded Router userdata file to $RouterUserDataPath"
+        }
+    }
+    
+    # Verify that the required files exist
+    $missingFiles = @()
+    
+    if (-not (Test-Path $NestedLabScriptPath -PathType Leaf)) {
+        $missingFiles += $NestedLabScriptURL.Split('/')[-1]
+    }
+    
+    if (-not (Test-Path $UbuntuOvaPath -PathType Leaf)) {
+        $missingFiles += $UbuntuOvaURL.Split('/')[-1]
+    }
+    
+    if (-not (Test-Path $RouterUserDataPath -PathType Leaf)) {
+        $missingFiles += $RouterUserDataURL.Split('/')[-1]
+    }
+    
+    if ($missingFiles.Count -gt 0) {
+        Write-Log "|--Set-NestedLabPackage - Missing required files: $($missingFiles -join ', ')"
+        Write-Log "|--Set-NestedLabPackage - The script may fail because required files could not be downloaded"
     }
     
     return (Test-Path $ExtractionPath)
 }
 
+function Download-FileWithFallback {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Source,
+        
+        [Parameter(Mandatory = $true)]
+        [string]$Destination,
+        
+        [Parameter()]
+        [string]$FileName,
+        
+        [Parameter()]
+        [int]$RetryCount = 3
+    )
+    
+    # Get filename from URL if not specified
+    if (-not $FileName) {
+        $FileName = $Source.Split('/')[-1]
+    }
+    
+    $FullDestination = Join-Path $Destination $FileName
+    
+    # Check if file already exists
+    if (Test-Path $FullDestination) {
+        Write-Log "|--Download-FileWithFallback - File already exists: $FullDestination"
+        return $true
+    }
+    
+    Write-Log "|--Download-FileWithFallback - Attempting to download $Source to $FullDestination"
+    
+    # Ensure TLS 1.2 is used
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    
+    # Try BITS transfer first with retries
+    for ($i = 1; $i -le $RetryCount; $i++) {
+        try {
+            Write-Log "|--Download-FileWithFallback - Trying BitsTransfer (attempt $i of $RetryCount)..."
+            Start-BitsTransfer -Source $Source -Destination $FullDestination -Priority High -ErrorAction Stop
+            Write-Log "|--Download-FileWithFallback - BitsTransfer completed successfully"
+            return $true
+        }
+        catch {
+            $errorMessage = $_.Exception.Message
+            Write-Log "|--Download-FileWithFallback - BitsTransfer attempt $i failed: $errorMessage"
+            if ($i -eq $RetryCount) {
+                Write-Log "|--Download-FileWithFallback - All BitsTransfer attempts failed, trying alternative methods"
+            } else {
+                Write-Log "|--Download-FileWithFallback - Retrying in 5 seconds..."
+                Start-Sleep -Seconds 5
+            }
+        }
+    }
+        
+    # Try WebClient as fallback
+    try {
+        Write-Log "|--Download-FileWithFallback - Trying WebClient download method..."
+        $webClient = New-Object System.Net.WebClient
+        $webClient.DownloadFile($Source, $FullDestination)
+        Write-Log "|--Download-FileWithFallback - WebClient download completed successfully"
+        return $true
+    }
+    catch {
+        $errorMessage = $_.Exception.Message
+        Write-Log "|--Download-FileWithFallback - WebClient download failed: $errorMessage"
+        
+        # Try Invoke-WebRequest as last resort
+        try {
+            Write-Log "|--Download-FileWithFallback - Trying Invoke-WebRequest..."
+            Invoke-WebRequest -Uri $Source -OutFile $FullDestination -UseBasicParsing
+            Write-Log "|--Download-FileWithFallback - Invoke-WebRequest download completed successfully"
+            return $true
+        }
+        catch {
+            $errorMessage = $_.Exception.Message
+            Write-Log ("|--Download-FileWithFallback - All download methods failed for $Source. Error: " + $errorMessage)
+            return $false
+        }
+    }
+}
 
 function Get-NestedLabConfigurationsFromManagedIdentity {
     # This script block grabs AVS credentials and store them in a variable that is required to run the nested lab deployment script.
@@ -368,7 +494,11 @@ function Build-NestedLab {
         
         [Parameter()]
         [hashtable]
-        $AVSInfo
+        $AVSInfo,
+        
+        [Parameter()]
+        [Int]
+        $StartIndex = 1
     )
 
     Set-Location $ExtractionPath
@@ -379,7 +509,7 @@ function Build-NestedLab {
 
     Write-Log "|--Build-NestedLab - Started deploying $NumberOfNestedLabs nested labs for GroupID $GroupNumber"
 
-    for ($i = $ReStartIndex; $i -le $NumberOfNestedLabs; $i++) {
+    for ($i = $StartIndex; $i -le $NumberOfNestedLabs; $i++) {
         #Start-Process -Wait -FilePath PWSH.exe -WorkingDirectory $ExtractionPath -ArgumentList "-ExecutionPolicy Unrestricted -NonInteractive -NoProfile -WindowStyle Hidden", "-Command .\labdeploy.ps1 -group $groupNumber -lab $i -automated"
         Write-Log "|--Build-NestedLab - Started building Nested Lab #$i "
         .\labdeploy.ps1 -group $GroupNumber -lab $i -automated -AVSInfo $AVSInfo
@@ -421,9 +551,9 @@ if (Set-NestedLabRequirement) {
     Write-Log "Extracting nested labs Zip package"
     if (Set-NestedLabPackage) {
         if (Set-NestedLabConfigurationsFromYaml) {
-            Build-NestedLab -GroupNumber $GroupNumber -NumberOfNestedLabs $NumberOfNestedLabs
+            Build-NestedLab -GroupNumber $GroupNumber -NumberOfNestedLabs $NumberOfNestedLabs -StartIndex $ReStartIndex
         } else {
-            # If there is no YAML configuration file: try to use VM managed identity to authenticate to AVS and get AVS credentials
+            # If there is no YAML configuration file: try to use VM managed identity to.authenticate to AVS and get AVS credentials
             Write-Log "Validation authentication to AVS from Jumpbox VM (i.e.: making sure Jumpbox VM managed identity has contributor permission over AVS Private Cloud resource)"
             if (Test-AuthenticationToAVS) {
                 Write-Log "Getting AVS credentials information that is required by labdeploy.ps1 script"
@@ -434,7 +564,7 @@ if (Set-NestedLabRequirement) {
                         Write-Log "Enabling outbound Internet access from AVS which is required by labdeploy.ps1 script"
                         if (Enable-AVSPrivateCloudInternetViaSNAT) {
                             Write-Log "Executing labdeploy.ps1 script for building $NumberOfNestedLabs nested VMware vSphere labs inside AVS Private Cloud"
-                            Build-NestedLab -GroupNumber $GroupNumber -NumberOfNestedLabs $NumberOfNestedLabs -AVSInfo $AVSInfo
+                            Build-NestedLab -GroupNumber $GroupNumber -NumberOfNestedLabs $NumberOfNestedLabs -AVSInfo $AVSInfo -StartIndex $ReStartIndex
                         }
                     }
                 }
