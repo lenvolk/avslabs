@@ -1,10 +1,12 @@
 # Azure VMware Solution (AVS) Arc Deployment
 
-This document outlines the Azure Arc deployment process for Azure VMware Solution (AVS) using the `arc.ps1` script provided in this repository.
+This document outlines the Azure Arc deployment process for Azure VMware Solution (AVS) using the `arc-deploy.ps1` script provided in this repository.
 
 ## Overview
 
-The `arc.ps1` script automates the deployment of Azure Arc for VMware environments. It connects your VMware vCenter to Azure Arc, enabling Azure management and monitoring capabilities for your on-premises VMware infrastructure. 
+The `arc-deploy.ps1` script automates the deployment of Azure Arc for VMware environments. It connects your VMware vCenter to Azure Arc, enabling Azure management and monitoring capabilities for your on-premises VMware infrastructure or Azure VMware Solution (AVS) private cloud.
+
+The deployment also includes the option to set up vSphere permissions using the `azure-arc-resourcebridge-role.ps1` script, which creates the necessary role and permissions for Azure Arc to manage vSphere resources.
 
 ## Deployment Workflow
 
