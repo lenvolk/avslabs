@@ -4,7 +4,7 @@ This document outlines the Azure Arc deployment process for Azure VMware Solutio
 
 ## Overview
 
-The `arc.ps1` script automates the deployment of Azure Arc for VMware environments. It connects your VMware vCenter to Azure Arc, enabling Azure management and monitoring capabilities for your on-premises VMware infrastructure.
+The `arc.ps1` script automates the deployment of Azure Arc for VMware environments. It connects your VMware vCenter to Azure Arc, enabling Azure management and monitoring capabilities for your on-premises VMware infrastructure. 
 
 ## Deployment Workflow
 
